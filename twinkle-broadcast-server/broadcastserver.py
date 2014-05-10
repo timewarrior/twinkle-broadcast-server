@@ -1,69 +1,44 @@
-import getopt
-import sys
+from autobahn.twisted.websocket import WebSocketServerProtocol, \
+                                       WebSocketServerFactory
 
-from twisted.internet import reactor
-from twisted.python import log
-from twisted.web.server import Site
-from twisted.web.static import File
+cs = []
 
-from autobahn.websocket import WebSocketServerFactory, WebSocketServerProtocol, listenWS
+class MyServerProtocol(WebSocketServerProtocol):
 
-DEFAULT_URL = "ws://localhost:9000"
+   def onConnect(self, request):
+      print("Client connecting: {0}".format(request.peer))
 
-class BroadcastServerProtocol(WebSocketServerProtocol):
-    def onOpen(self):
-        self.factory.register(self)
+   def onOpen(self):
+      print("WebSocket connection open.")
+      if self not in cs:
+         cs.append(self)
 
-    def onMessage(self, msg, binary):
-        self.factory.broadcast(msg)
+   def onMessage(self, payload, isBinary):
+      if isBinary:
+         print("Binary message received: {0} bytes".format(len(payload)))
+      else:
+         print("Text message received: {0}".format(payload.decode('utf8')))
 
-    def connectionLost(self, reason):
-        WebSocketServerProtocol.connectionLost(self, reason)
-        self.factory.unregister(self)
+      ## echo back message verbatim
+      self.sendMessage(payload, isBinary)
+      for client in cs:
+         client.sendMessage(payload)
 
+   def onClose(self, wasClean, code, reason):
+      print("WebSocket connection closed: {0}".format(reason))
 
-class BroadcastServerFactory(WebSocketServerFactory):
-    def __init__(self, url):
-        WebSocketServerFactory.__init__(self, url)
-        self.clients = []
-
-    def register(self, client):
-       if not client in self.clients:
-            print("Registered client " + client.peerstr)
-            self.clients.append(client)
-
-    def unregister(self, client):
-       if client in self.clients:
-            print ("Unregistered client " + client.peerstr)
-            self.clients.remove(client)
-
-    def broadcast(self, msg):
-        print ("Broadcasting message '%s' .." % msg)
-        for client in self.clients:
-            client.sendMessage(msg)
-            print ("Message sent to " + client.peerstr)
 
 if __name__ == '__main__':
-    url = DEFAULT_URL
 
-    argv = sys.argv[1:]
-    try:
-        opts, args = getopt.getopt(argv,"h",["url=", "help"])
-    except getopt.GetoptError:
-        print('twinkle-broadcast-server [--url=<url to web socket server>] [-h|--help]')
-        sys.exit(2)
-    for opt, arg in opts:
-        if opt in ("-h", "--help"):
-            print('twinkle-broadcast-server [--url=<url to web socket server>] [-h|--help]')
-            sys.exit()
-        elif opt in ("--url"):
-            url = arg
+   import sys
 
-    # TODO Benifits of prepared server?
-    # ServerFactory = BroadcastPreparedServerFactory
+   from twisted.python import log
+   from twisted.internet import reactor
 
-    factory = BroadcastServerFactory(url)
-    factory.protocol = BroadcastServerProtocol
-    factory.setProtocolOptions(allowHixie76 = True)
-    listenWS(factory)
-    reactor.run()
+   log.startLogging(sys.stdout)
+
+   factory = WebSocketServerFactory("ws://localhost:9000", debug=False)
+   factory.protocol = MyServerProtocol
+
+   reactor.listenTCP(9000, factory)
+   reactor.run()
